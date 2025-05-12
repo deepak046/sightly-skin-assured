@@ -3,6 +3,9 @@ import { useState, useCallback } from "react";
 import { Upload, ImageIcon, FileVideo, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { Progress } from "@/components/ui/progress";
+import { toast } from "@/components/ui/sonner";
+import { supabase } from "@/integrations/supabase/client";
 
 const UploadZone = () => {
   const [isDragging, setIsDragging] = useState(false);
@@ -10,10 +13,13 @@ const UploadZone = () => {
   const [preview, setPreview] = useState<string | null>(null);
   const [isVideo, setIsVideo] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisProgress, setAnalysisProgress] = useState(0);
   const [result, setResult] = useState<null | {
     condition: string;
     severity: "low" | "medium" | "high";
     needsConsultation: boolean;
+    resultImage?: string;
+    nextSteps?: string[];
   }>(null);
 
   const onDragOver = useCallback((e: React.DragEvent) => {
@@ -58,21 +64,50 @@ const UploadZone = () => {
     reader.readAsDataURL(file);
   };
 
-  const analyzeImage = () => {
-    // Simulate analysis (in real app, this would call your backend/API)
-    setIsAnalyzing(true);
+  const analyzeImage = async () => {
+    if (!preview) return;
     
-    // Mock API response after delay
-    setTimeout(() => {
-      setIsAnalyzing(false);
+    setIsAnalyzing(true);
+    setAnalysisProgress(10);
+    
+    try {
+      // Simulate progress
+      const progressInterval = setInterval(() => {
+        setAnalysisProgress(prev => {
+          const newProgress = prev + 5;
+          return newProgress >= 90 ? 90 : newProgress;
+        });
+      }, 200);
       
-      // Mock result - in real app, this would come from your AI model
-      setResult({
-        condition: "Mild Contact Dermatitis",
-        severity: "low",
-        needsConsultation: false
+      // Call our Supabase Edge Function
+      const { data, error } = await supabase.functions.invoke("analyze-skin", {
+        body: { image: preview }
       });
-    }, 2000);
+      
+      clearInterval(progressInterval);
+      setAnalysisProgress(100);
+      
+      if (error) {
+        throw new Error(error.message || "Failed to analyze image");
+      }
+      
+      // Process the result
+      setResult({
+        condition: data.condition || "Unknown Condition",
+        severity: data.severity || "medium",
+        needsConsultation: data.needsConsultation || false,
+        resultImage: data.resultImage || preview, // Use the annotated image if available
+        nextSteps: data.nextSteps || ["Monitor your condition", "Keep the area clean"]
+      });
+      
+      toast.success("Analysis completed successfully");
+    } catch (err: any) {
+      console.error("Analysis error:", err);
+      toast.error(`Analysis failed: ${err.message || "Unknown error"}`);
+    } finally {
+      setIsAnalyzing(false);
+      setAnalysisProgress(0);
+    }
   };
 
   const resetUpload = () => {
@@ -154,12 +189,23 @@ const UploadZone = () => {
                 />
               ) : (
                 <img 
-                  src={preview || ""}
+                  src={result?.resultImage || preview || ""}
                   alt="Preview" 
                   className="mx-auto max-h-72 object-contain" 
                 />
               )}
             </div>
+            
+            {/* Analysis progress */}
+            {isAnalyzing && (
+              <div className="mt-4 space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span>Analyzing image...</span>
+                  <span>{analysisProgress}%</span>
+                </div>
+                <Progress value={analysisProgress} className="h-2" />
+              </div>
+            )}
             
             {/* Controls */}
             <div className="mt-4 flex flex-wrap gap-3">
@@ -199,6 +245,17 @@ const UploadZone = () => {
                     {result.severity.charAt(0).toUpperCase() + result.severity.slice(1)}
                   </p>
                 </div>
+                
+                {result.nextSteps && result.nextSteps.length > 0 && (
+                  <div>
+                    <span className="text-sm text-gray-500">Next Steps</span>
+                    <ul className="list-disc pl-5 mt-1">
+                      {result.nextSteps.map((step, index) => (
+                        <li key={index} className="text-gray-700">{step}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 
                 <div className="pt-2">
                   {result.needsConsultation ? (
